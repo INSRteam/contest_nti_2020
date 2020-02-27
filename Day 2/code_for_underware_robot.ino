@@ -5,60 +5,91 @@
 MS5837 sensor;
 
 //концевики
-const int con1 = 7;  
-const int con2 = 8; 
+const int con_compression = 7;  
+const int con_release = 8; 
 
 //движение
 const int motor1_1 = 2;
 const int motor1_2 = 3;
-const int motor1_speed = 5;
+const int motor_depth = 5;
 
 //манипулятор
 const int motor2_1 = 10;
 const int motor2_2 = 11;
-const int motor2_speed = 6;
+const int motor_manipulator = 6;
+const int power = 150;
+
+int seconds;
 
 class P_regulator {
 
 private:
   // ПИД переменные
-  double kp = 2;
-  double ki = 0;
-  double kd = 0;
+  double kp;
+  double ki;
+  double kd;
  
   unsigned long currentTime, previousTime;
   double elapsedTime;
   double error;
   double lastError;
   double input, output, setPoint;
-  //double cumError, rateError;
 
-/*  
-public setKp(int kp) {
-  this.kp = kp;
-}
-*/
-
-//вычисление П регулятора
-double computeP() {
- currentTime = millis();  // получить текущее время
- elapsedTime = (double)(currentTime - previousTime);        // вычислительное время, прошедшее с момента предыдущего вычисления
-        
-  error = Setpoint - inp;                                // определение ошибки
-  //cumError += error * elapsedTime;                // вычесление интеграла
-  // rateError = (error - lastError)/elapsedTime;    // вычесление производной
-
-  double out = kp*error //+ ki*cumError +   kd*rateError;                // выход П регулятора            
- 
-  lastError = error;                                // запомнить текущую ошибку
-  previousTime = currentTime;                        // запомнить текущую время
- 
-   return out;                                        // выход П функции
-
+public:
+  P_regulator(int k_p, int k_i, int k_d) {
+    kp = k_p;
+    ki = k_i;
+    kd = k_d;
   }
+  //вычисление П регулятора
+  double regulateDepth(double target_depth) {
+    sensor.read();
+    currentTime = millis();  // получить текущее время
+    elapsedTime = (double)(currentTime - previousTime);        // вычислительное время, прошедшее с момента предыдущего вычисления
+          
+    error = target_depth - sensor.depth();                                // определение ошибки
+    //cumError += error * elapsedTime;                // вычесление интеграла
+    // rateError = (error - lastError)/elapsedTime;    // вычесление производной
+  
+    double out = kp * error; //+ ki*cumError +   kd*rateError;                // выход П регулятора            
+   
+    lastError = error;                                // запомнить текущую ошибку
+    previousTime = currentTime;                        // запомнить текущую время
+   
+     return out;                                        // выход П функции
+  
+    }
 }
 
-P_regulator pid = new P_regulator();
+P_regulator pid = new P_regulator(2, 0, 0);
+
+void setPowerDepth(int power) {
+  digitalWrite(motor2_1, HIGH);
+  digitalWrite(motor2_2, LOW);
+  analogWrite(motor_depth, power);
+}
+
+void setPowerManipulator(int power) {
+  digitalWrite(motor2_1, HIGH);
+  digitalWrite(motor2_2, LOW);
+  analogWrite(motor_manipulator, power);
+}
+
+void compressionManipulator(double depth) {
+  while (!digitalRead(con_compression)) {
+    setPowerManipulator(power);
+    setPowerDepth(pid.regulateDepth(depth));
+  }
+  setPowerManipulator(0);
+}
+
+void releaseManipulator(double depth) {
+  while (!digitalRead(con_release)) {
+     setPowerManipulator(-power);
+     setPowerDepth(pid.regulateDepth(depth));
+  }
+  setPowerManipulator(0);
+}
 
 void setup() {
 
@@ -67,53 +98,48 @@ void setup() {
   Wire.begin();  //Инициализирует библиотеку Wire и подключается к шине I2C
 
   while (!sensor.init()) {
-    Serial.println("Иницилизация датчика глубины не удалась!");
+    Serial.println("Инициализация датчика глубины не удалась!");
     Serial.println("\n\n\n");
     delay(5000);
   }
 
   sensor.setModel(MS5837::MS5837_30BA);
   sensor.setFluidDensity(997); // кг/м**3 (пресная вода, 1029 для морской воды)
-
-  
-  pinMode(motor1_1,OUTPUT);  
-  pinMode(motor1_2,OUTPUT); 
-  pinMode(motor1_speed,OUTPUT);
+  pinMode(con_compression, INPUT);
+  pinMode(con_release, INPUT);
   
   pinMode(motor1_1,OUTPUT); 
   pinMode(motor1_2,OUTPUT); 
-  pinMode(motor1_speed,OUTPUT);
+  pinMode(motor_depth,OUTPUT);
   
   pinMode(motor2_1,OUTPUT);
   pinMode(motor2_2,OUTPUT);
-  pinMode(motor2_speed,OUTPUT);
+  pinMode(motor_manipulator,OUTPUT);
 } 
 
+int time_task = millis()
 void loop() {
-
+  
   sensor.read();  // Обновление показаний 
 
   Serial.print("Глубина: "); 
   Serial.print(sensor.depth()); 
   Serial.println(" м");
 
-  currentTime = millis();
-  
-  while (millis() - currentTime < seconds * 1000) {
-    digitalWrite(motor1_1, HIGH);
-    digitalWrite(motor1_2, HIGH);
-    analogWrite(motor2_speed, pid.computeP());
-  }
-   digitalWrite(motor2_1, HIGH);
-   digitalWrite(motor2_2, HIGH);
+  bool con = digitalRead(con_compression);  // чтение концевика 
+  String s = "Value = " + string(con);
+  Serial.println(s);    // Выводим в монитор порта значение концевика
 
-   
-  }
-
- 
-  bool con = analogRead(A6);  // чтение концевика 
-  
-  Serial.print("Value = ");    // Выводим в монитор порта текст
-  Serial.println(digitalRead(conPin));  // Считываем значение сигнала с вывода, к которому подключен концевик и выводим значение в монитор порта
-
+  /*
+   *
+   * while(sensor.depth() < 1.95) {
+   *  releaseManipulator(2);
+   *  setPowerDepth(pid.regulate_depth(2));     
+   * }
+   * compressionManipulator(2);
+   * while(sensor.depth() > 0.1) {
+   *  setPowerDepth(pid.regulate_depth(0)); 
+   * }
+   * releaseManipulator(0);
+   */
 }
